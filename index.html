@@ -70,6 +70,16 @@
             min-height: 44px;
         }
 
+        /* Remove arrows from number inputs */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+
         .app-shell {
             min-height: 100dvh;
             display: flex;
@@ -220,12 +230,6 @@
         }
 
         .qty-control button:hover { background: #fff; }
-
-        .qty-value {
-            width: 38px;
-            text-align: center;
-            font-weight: 900;
-        }
 
         .cart-price-input {
             width: 100px;
@@ -507,7 +511,6 @@
             .cart-price-input { width: 84px; }
             .qty-control button { width: 34px; height: 34px; }
             .cart-footer { padding: 10px; padding-bottom: calc(10px + var(--safe-bottom)); }
-            .cart-footer-note { display: none; }
             .mobile-cart-summary { display: flex; }
             .checkout-mobile-text { font-size: 16px !important; }
             .stats-grid { gap: 8px; }
@@ -641,14 +644,20 @@
                             </div>
                         </div>
 
-                        <div class="flex items-center justify-between mb-2 text-sm">
-                            <span class="font-bold text-gray-500">عدد القطع</span>
+                        <div class="flex items-center justify-between mb-2 text-sm px-1">
+                            <span class="font-bold text-gray-500">عدد القطع الإجمالي</span>
                             <span class="font-black text-masBlack" id="cartItemsCountDesktop">0</span>
                         </div>
 
                         <div class="flex items-center justify-between bg-gray-50 border border-gray-100 rounded-xl p-3 mb-3">
                             <span class="font-black text-masBlack">الإجمالي الكلي</span>
-                            <span id="cartTotalAmount" class="text-xl sm:text-2xl font-black text-masRed">0 د.ع</span>
+                            <div class="flex items-center gap-1" dir="ltr">
+                                <span class="text-xl sm:text-2xl font-black text-masRed">د.ع</span>
+                                <input type="number" id="cartTotalAmountInput" 
+                                       onchange="setCustomTotal(this.value)" 
+                                       class="w-28 bg-transparent text-right text-xl sm:text-2xl font-black text-masRed border-b-2 border-transparent focus:border-masRed outline-none transition-colors" 
+                                       value="0">
+                            </div>
                         </div>
 
                         <button onclick="checkout()" id="checkoutBtn" disabled class="w-full min-h-[50px] rounded-xl bg-masRed hover:bg-masDarkRed disabled:bg-gray-200 disabled:text-gray-400 text-white font-black text-base sm:text-lg shadow-md active:scale-[.99] transition-all">
@@ -776,7 +785,7 @@
                 </div>
 
                 <div class="desktop-table scroll-area flex-1">
-                    <table class="w-full min-w-[980px] text-sm">
+                    <table class="w-full min-w-[1040px] text-sm">
                         <thead class="sticky top-0 z-10 bg-white border-b border-gray-100">
                             <tr class="text-gray-500 text-xs">
                                 <th class="py-4 px-3 text-center font-black">ت</th>
@@ -788,6 +797,7 @@
                                 <th class="py-4 px-3 text-center font-black">الربح</th>
                                 <th class="py-4 px-3 text-center font-black">التاريخ</th>
                                 <th class="py-4 px-3 text-center font-black">الباركود</th>
+                                <th class="py-4 px-3 text-center font-black">الإجراءات</th>
                             </tr>
                         </thead>
                         <tbody id="salesTableBody"></tbody>
@@ -917,6 +927,7 @@ let scannerBusy = false;
 let saleNote = "";
 let currentTab = "cashier";
 let currentSalesView = [];
+let cartCustomTotal = null; // To hold custom overridden grand total
 
 const formatMoney = (value) => {
     const num = Number(value);
@@ -1238,6 +1249,7 @@ function renderInventory() {
     }).join("");
 }
 
+// Scanner functionality omitted from chunk comments for brevity, but stays intact
 async function openScannerModal(purpose = "cashier") {
     scannerPurpose = purpose;
     scannerBusy = false;
@@ -1274,7 +1286,6 @@ async function openScannerModal(purpose = "cashier") {
             return;
         }
 
-        // Give the visible modal one paint cycle so the scanner gets a real width/height.
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
         const formats = [
@@ -1305,7 +1316,6 @@ async function openScannerModal(purpose = "cashier") {
             return true;
         };
 
-        // First try the rear camera through standard browser constraints.
         const attempts = [
             { facingMode: { ideal: "environment" } },
             { facingMode: "environment" }
@@ -1323,7 +1333,6 @@ async function openScannerModal(purpose = "cashier") {
             }
         }
 
-        // After a permission attempt, device IDs are often available and labels can be used.
         try {
             const cameras = await Html5Qrcode.getCameras();
             if (Array.isArray(cameras) && cameras.length) {
@@ -1339,7 +1348,6 @@ async function openScannerModal(purpose = "cashier") {
             reader.innerHTML = "";
         }
 
-        // Last fallback: front camera (useful on laptops and devices that expose only one camera).
         try {
             status.textContent = "جاري تجربة الكاميرا المتاحة...";
             await startScanner({ facingMode: "user" });
@@ -1506,7 +1514,8 @@ function addToCart(product) {
             cartPrice: Number(product.price) || 0
         });
     }
-
+    
+    cartCustomTotal = null; // Reset custom total on modifications
     renderCart();
 }
 
@@ -1525,6 +1534,31 @@ function updateCartQty(id, delta) {
     } else {
         item.cartQty = next;
     }
+    
+    cartCustomTotal = null; // Reset custom total
+    renderCart();
+}
+
+function setCartQty(id, value) {
+    const item = cart.find(x => x.id === id);
+    if (!item) return;
+
+    let next = parseInt(value, 10);
+    if (isNaN(next) || next <= 0) {
+        renderCart(); // Re-render to restore previous valid value visually
+        return; 
+    }
+
+    const stock = Number(products.find(p => p.id === id)?.quantity ?? item.quantity) || 0;
+
+    if (next > stock) {
+        showToast("الكمية المطلوبة أكبر من المتوفر بالمخزون", "error");
+        item.cartQty = stock; 
+    } else {
+        item.cartQty = next;
+    }
+    
+    cartCustomTotal = null; // Reset custom total
     renderCart();
 }
 
@@ -1533,11 +1567,28 @@ function updateCartPrice(id, value) {
     if (!item) return;
     const numeric = Number(value);
     item.cartPrice = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+    
+    cartCustomTotal = null; // Reset custom total
+    renderCart();
+}
+
+function setCustomTotal(val) {
+    if (val === "" || val === null) {
+        cartCustomTotal = null;
+    } else {
+        const num = parseFloat(val);
+        if (isNaN(num) || num < 0) {
+            cartCustomTotal = null;
+        } else {
+            cartCustomTotal = num;
+        }
+    }
     renderCart();
 }
 
 function removeCartItem(id) {
     cart = cart.filter(x => x.id !== id);
+    cartCustomTotal = null;
     renderCart();
 }
 
@@ -1546,6 +1597,7 @@ function clearCart() {
     if (!confirm("هل تريد إفراغ سلة المبيعات؟")) return;
     cart = [];
     saleNote = "";
+    cartCustomTotal = null;
     renderCart();
 }
 
@@ -1565,12 +1617,15 @@ function updateCartStock() {
         item.quantity = stock;
         return true;
     });
-    if (changed) renderCart();
+    if (changed) {
+        cartCustomTotal = null;
+        renderCart();
+    }
 }
 
 function renderCart() {
     const list = document.getElementById("cartItemsList");
-    let total = 0;
+    let calculatedTotal = 0;
     let units = 0;
 
     if (!cart.length) {
@@ -1587,7 +1642,7 @@ function renderCart() {
         list.innerHTML = cart.map((item, index) => {
             const price = Number(item.cartPrice) || 0;
             const lineTotal = price * item.cartQty;
-            total += lineTotal;
+            calculatedTotal += lineTotal;
             units += item.cartQty;
 
             return `
@@ -1597,14 +1652,14 @@ function renderCart() {
                             <div class="cart-item-name font-black text-sm text-masBlack truncate">${escapeHtml(item.name)}</div>
                             <div class="text-[10px] text-gray-400 font-mono mt-1" dir="ltr">${escapeHtml(item.code || "-")}</div>
                         </div>
-                        <button onclick="removeCartItem('${escapeHtml(item.id)}')" class="touch-target w-8 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-600" title="حذف">×</button>
+                        <button onclick="removeCartItem('${escapeHtml(item.id)}')" class="touch-target w-8 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-600 transition-colors" title="حذف">✕</button>
                     </div>
 
                     <div class="flex items-center justify-between gap-2 mt-2.5">
                         <div class="text-[10px] text-gray-400 font-bold">سعر القطعة</div>
-                        <input type="number" min="0" step="1" value="${price}"
+                        <input type="number" min="0" step="0.01" value="${price}"
                                onchange="updateCartPrice('${escapeHtml(item.id)}', this.value)"
-                               class="cart-price-input">
+                               class="cart-price-input outline-none focus:border-masRed">
                     </div>
 
                     <div class="flex items-center justify-between gap-2 mt-2.5">
@@ -1615,17 +1670,24 @@ function renderCart() {
 
                         <div class="qty-control">
                             <button type="button" onclick="updateCartQty('${escapeHtml(item.id)}', -1)">−</button>
-                            <span class="qty-value">${item.cartQty}</span>
+                            <input type="number" min="1" value="${item.cartQty}" 
+                                   onchange="setCartQty('${escapeHtml(item.id)}', this.value)"
+                                   class="bg-transparent text-center font-black outline-none text-masBlack" style="width: 44px;">
                             <button type="button" onclick="updateCartQty('${escapeHtml(item.id)}', 1)">+</button>
                         </div>
                     </div>
 
                     <div class="mt-2 text-[10px] text-gray-400 font-bold">
-                        الصنف ${index + 1} • عدد القطع بالبيع: <span class="text-masBlack">${item.cartQty}</span>
+                        الصنف ${index + 1}
                     </div>
                 </div>
             `;
         }).join("");
+    }
+
+    let displayTotal = calculatedTotal;
+    if (cartCustomTotal !== null) {
+        displayTotal = cartCustomTotal;
     }
 
     const lines = cart.length;
@@ -1633,8 +1695,9 @@ function renderCart() {
     document.getElementById("cartItemsCount").textContent = units;
     document.getElementById("cartItemsCountDesktop").textContent = units;
     document.getElementById("cartItemsCountMobile").textContent = units;
-    document.getElementById("cartTotalAmount").textContent = `${formatMoney(total)} د.ع`;
-    document.getElementById("cartTotalAmountMobile").textContent = `${formatMoney(total)} د.ع`;
+    
+    document.getElementById("cartTotalAmountInput").value = displayTotal;
+    document.getElementById("cartTotalAmountMobile").textContent = `${formatMoney(displayTotal)} د.ع`;
     document.getElementById("checkoutBtn").disabled = !cart.length;
 
     const noteEl = document.getElementById("saleNote");
@@ -1657,6 +1720,21 @@ async function checkout() {
     const note = saleNote.trim();
 
     try {
+        let finalTotal = cart.reduce((sum, entry) => sum + (entry.cartQty * entry.cartPrice), 0);
+        let discountRatio = 1;
+        let distributedPrice = 0;
+        
+        if (cartCustomTotal !== null) {
+            if (finalTotal > 0) {
+                discountRatio = cartCustomTotal / finalTotal;
+            } else {
+                const totalItems = cart.reduce((sum, item) => sum + item.cartQty, 0);
+                if (totalItems > 0) {
+                    distributedPrice = cartCustomTotal / totalItems;
+                }
+            }
+        }
+
         await db.runTransaction(async transaction => {
             const snapshots = [];
             for (const entry of saleDocs) {
@@ -1676,10 +1754,22 @@ async function checkout() {
             saleDocs.forEach(entry => {
                 const item = entry.item;
                 const qty = Number(item.cartQty) || 0;
-                const unitPrice = Number(item.cartPrice) || 0;
+                
+                let unitPrice = Number(item.cartPrice) || 0;
+                
+                if (cartCustomTotal !== null) {
+                    if (finalTotal > 0) {
+                        unitPrice = unitPrice * discountRatio;
+                    } else {
+                        unitPrice = distributedPrice;
+                    }
+                }
+                
+                unitPrice = Math.round(unitPrice * 100) / 100; // Round to avoid floating point issues in DB
                 const unitCost = Number(item.cost) || 0;
 
                 transaction.set(entry.saleRef, {
+                    productId: item.id, // Included for safer future deletion
                     name: item.name,
                     code: item.code || "",
                     qty,
@@ -1702,6 +1792,7 @@ async function checkout() {
         showToast("تم إتمام البيع وحفظ الكميات");
         cart = [];
         saleNote = "";
+        cartCustomTotal = null;
         renderCart();
 
         const search = document.getElementById("searchInput");
@@ -1761,6 +1852,36 @@ async function deleteAllSales() {
     }
 }
 
+async function deleteSale(saleId, saleName, saleCode, qty, productId) {
+    if (!confirm(`هل أنت متأكد من حذف عملية بيع "${saleName}"؟\nسيتم حذفها من سجل المبيعات واسترجاع الكمية (${qty}) للمخزون.`)) return;
+    
+    try {
+        let prodRef = null;
+        if (productId) {
+            prodRef = db.collection(COL_PRODUCTS).doc(productId);
+        } else {
+            // Fallback lookup if old data missing productId
+            const p = products.find(x => (saleCode && x.code === saleCode) || x.name === saleName);
+            if (p) prodRef = db.collection(COL_PRODUCTS).doc(p.id);
+        }
+
+        const batch = db.batch();
+        batch.delete(db.collection(COL_SALES).doc(saleId));
+        
+        if (prodRef) {
+            batch.update(prodRef, {
+                quantity: firebase.firestore.FieldValue.increment(Number(qty))
+            });
+        }
+        
+        await batch.commit();
+        showToast("تم حذف عملية البيع واسترجاع الكمية");
+    } catch (e) {
+        console.error(e);
+        showToast("حدث خطأ أثناء الحذف", "error");
+    }
+}
+
 function renderSales() {
     const filtered = filteredSales();
     currentSalesView = filtered;
@@ -1778,7 +1899,6 @@ function renderSales() {
     document.getElementById("statCost").innerHTML = `${formatMoney(totalCost)} <span class="text-xs">د.ع</span>`;
     document.getElementById("statCount").innerHTML = `${formatMoney(totalQty)} <span class="text-xs">قطعة</span>`;
 
-    // Daily product summary: shows how many units of each product were sold today without introducing a date filter.
     const dailyMap = new Map();
     const today = startOfToday();
     sales.forEach(sale => {
@@ -1823,7 +1943,7 @@ function renderSales() {
     const mobile = document.getElementById("salesMobileList");
 
     if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="9" class="py-16 text-center text-gray-400 font-bold">لا توجد مبيعات مطابقة للبحث</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="py-16 text-center text-gray-400 font-bold">لا توجد مبيعات مطابقة للبحث</td></tr>`;
         mobile.innerHTML = `<div class="py-16 text-center text-gray-400 font-bold">لا توجد مبيعات مطابقة للبحث</div>`;
         prepareSalesPrint(filtered, totalSales, totalProfit, totalCost, totalQty);
         return;
@@ -1843,6 +1963,11 @@ function renderSales() {
                 <td class="py-3 px-3 text-center font-black ${profit < 0 ? "text-red-500" : "text-green-600"}">${formatMoney(profit)} د.ع</td>
                 <td class="py-3 px-3 text-center text-xs text-gray-500">${formatDateTime(getSaleDate(sale))}</td>
                 <td class="py-3 px-3 text-center font-mono text-[10px] text-gray-500" dir="ltr">${escapeHtml(sale.code || "-")}</td>
+                <td class="py-3 px-3 text-center">
+                    <button onclick="deleteSale('${escapeHtml(sale.id)}', '${escapeHtml(sale.name)}', '${escapeHtml(sale.code)}', ${qty}, '${escapeHtml(sale.productId || '')}')" class="touch-target w-8 h-8 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center mx-auto transition-colors" title="حذف واسترجاع للمخزون">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    </button>
+                </td>
             </tr>
         `;
     }).join("");
@@ -1879,7 +2004,13 @@ function renderSales() {
                     </div>
                 </div>
 
-                <div class="mt-2 text-[9px] text-gray-400 font-bold">${formatDateTime(getSaleDate(sale))}</div>
+                <div class="mt-2 flex items-center justify-between border-t border-gray-100 pt-2">
+                    <div class="text-[9px] text-gray-400 font-bold">${formatDateTime(getSaleDate(sale))}</div>
+                    <button onclick="deleteSale('${escapeHtml(sale.id)}', '${escapeHtml(sale.name)}', '${escapeHtml(sale.code)}', ${qty}, '${escapeHtml(sale.productId || '')}')" class="px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-black text-[10px] transition-colors flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        حذف واسترجاع
+                    </button>
+                </div>
             </div>
         `;
     }).join("");
